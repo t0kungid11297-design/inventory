@@ -122,6 +122,7 @@ export default function App() {
   const [withdrawRequests, setWithdrawRequests] = useState([]);
   const [restockLogs, setRestockLogs] = useState([]);
   const [siteSettings, setSiteSettings] = useState({ id: null, site_title: 'ระบบบริหารจัดการคลังสินค้าและพัสดุ TIC', site_subtitle: 'Enterprise Asset & Stock Management System' });
+  const [dbErrors, setDbErrors] = useState([]); // เก็บ error จากการดึงข้อมูลที่เคยหายไปเงียบๆ ให้แสดงเป็นแบนเนอร์แทน
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -196,8 +197,12 @@ export default function App() {
 
   const fetchRestockLogs = async () => {
     const { data, error } = await supabase.from('restock_logs').select('*').order('created_at', { ascending: false });
-    if (!error && data) setRestockLogs(data);
-    // ถ้ายังไม่ได้สร้างตาราง restock_logs ใน Supabase จะเกิด error เงียบๆ ตรงนี้ และประวัติจะว่างไปก่อน
+    if (error) {
+      setDbErrors(prev => [...prev.filter(e => e.source !== 'restock_logs'), { source: 'restock_logs', message: error.message }]);
+    } else if (data) {
+      setDbErrors(prev => prev.filter(e => e.source !== 'restock_logs'));
+      setRestockLogs(data);
+    }
   };
 
   const fetchSettings = async () => {
@@ -235,7 +240,9 @@ export default function App() {
 
     if (error) {
       console.error('Error fetching history:', error.message);
+      setDbErrors(prev => [...prev.filter(e => e.source !== 'transactions'), { source: 'transactions', message: error.message }]);
     } else if (data) {
+      setDbErrors(prev => prev.filter(e => e.source !== 'transactions'));
       // กรองเฉพาะรายการที่อนุมัติแล้วฝั่ง JS แทนการกรองใน query ตรงๆ
       // เพราะ .eq() ของ Supabase เทียบตัวพิมพ์เล็ก-ใหญ่แบบเป๊ะ ถ้าข้อมูลใน DB
       // ไม่ตรง case พอดี (เช่น "Approved") แถวนั้นจะหลุดจากรายงานไปเงียบๆ
@@ -266,8 +273,13 @@ export default function App() {
   };
 
   const fetchWithdrawRequests = async () => {
-    const { data } = await supabase.from('withdraw_requests').select('*').order('id', { ascending: false });
-    if (data) setWithdrawRequests(data.filter(r => !r.is_deleted));
+    const { data, error } = await supabase.from('withdraw_requests').select('*').order('id', { ascending: false });
+    if (error) {
+      setDbErrors(prev => [...prev.filter(e => e.source !== 'withdraw_requests'), { source: 'withdraw_requests', message: error.message }]);
+    } else if (data) {
+      setDbErrors(prev => prev.filter(e => e.source !== 'withdraw_requests'));
+      setWithdrawRequests(data.filter(r => !r.is_deleted));
+    }
   };
 
   const handleScanSuccess = (decodedText) => {
@@ -977,6 +989,17 @@ export default function App() {
           <button style={styles.btnLogout} onClick={() => setCurrentUser(null)}>ออกจากระบบ</button>
         </div>
       </header>
+
+      {isAdminLevel && dbErrors.length > 0 && (
+        <div style={{ backgroundColor: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#991b1b', padding: '8px 20px', fontSize: 12 }}>
+          ⚠️ พบปัญหาในการดึงข้อมูลบางส่วน (แสดงเฉพาะ Admin/Super Admin เท่านั้น):
+          <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+            {dbErrors.map((err, idx) => (
+              <li key={idx}><b>{err.source}</b>: {err.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Navigation Bar */}
       <div style={styles.navBar}>
@@ -1767,6 +1790,24 @@ export default function App() {
                     value={editData.min_quantity ?? ''} 
                     onChange={e => setEditData({ ...editData, min_quantity: e.target.value })} 
                   />
+
+                  <label style={styles.label}>URL รูปภาพพัสดุ:</label>
+                  <input 
+                    style={styles.input} 
+                    type="text" 
+                    placeholder="https://..." 
+                    value={editData.image_url || ''} 
+                    onChange={e => setEditData({ ...editData, image_url: e.target.value })} 
+                  />
+                  {editData.image_url && (
+                    <img 
+                      src={editData.image_url} 
+                      alt="ตัวอย่างรูปภาพ" 
+                      style={{ width: 100, height: 100, objectFit: 'cover', borderRadius: 6, marginTop: 6, border: '1px solid #cbd5e1' }} 
+                      onError={e => { e.target.style.display = 'none'; }}
+                      onLoad={e => { e.target.style.display = 'block'; }}
+                    />
+                  )}
 
                   <label style={styles.label}>ที่อยู่ผู้จัดจำหน่าย 1:</label>
                   <input style={styles.input} type="text" value={editData.store_address || ''} onChange={e => setEditData({ ...editData, store_address: e.target.value })} />
