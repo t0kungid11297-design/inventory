@@ -75,6 +75,41 @@ function QRScannerModal({ isOpen, onClose, onScanSuccess }) {
   );
 }
 
+// --- Component หน้าตั้งค่าระบบ (Super Admin เท่านั้น) ---
+function SettingsPanel({ siteSettings, onSave }) {
+  const [title, setTitle] = useState(siteSettings.site_title || '');
+  const [subtitle, setSubtitle] = useState(siteSettings.site_subtitle || '');
+
+  useEffect(() => {
+    setTitle(siteSettings.site_title || '');
+    setSubtitle(siteSettings.site_subtitle || '');
+  }, [siteSettings.id, siteSettings.site_title, siteSettings.site_subtitle]);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 15 }}>
+        <h4 style={styles.pageTitle}>ตั้งค่าระบบ</h4>
+        <span style={styles.pageSubtitle}>แก้ไขหัวข้อและคำอธิบายที่แสดงบนแถบด้านบนของระบบ (Super Admin เท่านั้น)</span>
+      </div>
+      <div style={{ ...styles.cardLarge, maxWidth: 500 }}>
+        <label style={styles.label}>หัวข้อระบบ:</label>
+        <input style={styles.input} type="text" value={title} onChange={e => setTitle(e.target.value)} />
+
+        <label style={{ ...styles.label, marginTop: 10 }}>คำอธิบายรอง:</label>
+        <input style={styles.input} type="text" value={subtitle} onChange={e => setSubtitle(e.target.value)} />
+
+        <button 
+          style={{ ...styles.btnSuccess, marginTop: 15 }} 
+          onClick={() => onSave(title, subtitle)}
+        >
+          บันทึกการตั้งค่า
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeTab, setActiveTab] = useState('inventory');
@@ -85,6 +120,8 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [reports, setReports] = useState([]);
   const [withdrawRequests, setWithdrawRequests] = useState([]);
+  const [restockLogs, setRestockLogs] = useState([]);
+  const [siteSettings, setSiteSettings] = useState({ id: null, site_title: 'ระบบบริหารจัดการคลังสินค้าและพัสดุ TIC', site_subtitle: 'Enterprise Asset & Stock Management System' });
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -153,7 +190,20 @@ export default function App() {
     fetchTransactions();
     fetchReports();
     fetchWithdrawRequests();
+    fetchSettings();
+    fetchRestockLogs();
   }, []);
+
+  const fetchRestockLogs = async () => {
+    const { data, error } = await supabase.from('restock_logs').select('*').order('created_at', { ascending: false });
+    if (!error && data) setRestockLogs(data);
+    // ถ้ายังไม่ได้สร้างตาราง restock_logs ใน Supabase จะเกิด error เงียบๆ ตรงนี้ และประวัติจะว่างไปก่อน
+  };
+
+  const fetchSettings = async () => {
+    const { data } = await supabase.from('settings').select('*').order('id', { ascending: true }).limit(1).single();
+    if (data) setSiteSettings(data);
+  };
 
   const fetchProducts = async () => {
     const { data } = await supabase.from('products').select('*').order('id', { ascending: true });
@@ -174,7 +224,7 @@ export default function App() {
     const [reqRes, prodRes] = await Promise.all([
       supabase
         .from('withdraw_requests')
-        .select('id, created_at, quantity, status, requested_by, note, product_id, product_name')
+        .select('id, created_at, quantity, status, requested_by, note, product_id, product_name, is_deleted')
         .order('created_at', { ascending: false }),
       supabase.from('products').select('id, price')
     ]);
@@ -189,7 +239,7 @@ export default function App() {
       // กรองเฉพาะรายการที่อนุมัติแล้วฝั่ง JS แทนการกรองใน query ตรงๆ
       // เพราะ .eq() ของ Supabase เทียบตัวพิมพ์เล็ก-ใหญ่แบบเป๊ะ ถ้าข้อมูลใน DB
       // ไม่ตรง case พอดี (เช่น "Approved") แถวนั้นจะหลุดจากรายงานไปเงียบๆ
-      const approvedOnly = data.filter(item => isApprovedStatus(item.status));
+      const approvedOnly = data.filter(item => isApprovedStatus(item.status) && !item.is_deleted);
       const formattedData = approvedOnly.map(item => {
         const dateObj = new Date(item.created_at);
         const unitPrice = priceById[item.product_id] || 0;
@@ -212,12 +262,12 @@ export default function App() {
 
   const fetchReports = async () => {
     const { data } = await supabase.from('reports').select('*').order('id', { ascending: false });
-    if (data) setReports(data);
+    if (data) setReports(data.filter(r => !r.is_deleted));
   };
 
   const fetchWithdrawRequests = async () => {
     const { data } = await supabase.from('withdraw_requests').select('*').order('id', { ascending: false });
-    if (data) setWithdrawRequests(data);
+    if (data) setWithdrawRequests(data.filter(r => !r.is_deleted));
   };
 
   const handleScanSuccess = (decodedText) => {
@@ -344,9 +394,23 @@ export default function App() {
     }
   };
 
+  const handleChangeUserRole = async (user, newRole) => {
+    if (!window.confirm(`ยืนยันการเปลี่ยนสิทธิ์ของ "${user.emp_id}" เป็น "${newRole}"?`)) return;
+    const { error } = await supabase.from('users').update({ role: newRole }).eq('id', user.id);
+    if (error) {
+      alert('ไม่สามารถเปลี่ยนสิทธิ์ผู้ใช้งานได้: ' + error.message);
+    } else {
+      fetchUsers();
+    }
+  };
+
   const handleDeleteUser = async (user) => {
     if (user.emp_id === currentUser.emp_id) {
       alert('ไม่สามารถลบบัญชีผู้ใช้งานปัจจุบันของท่านได้');
+      return;
+    }
+    if (user.role === 'Super Admin' && currentUser.role !== 'Super Admin') {
+      alert('ไม่มีสิทธิ์ลบบัญชีระดับ Super Admin');
       return;
     }
 
@@ -384,6 +448,15 @@ export default function App() {
     if (error) {
       alert('ไม่สามารถเพิ่มรายการพัสดุได้: ' + error.message);
     } else {
+      // บันทึกจำนวนเริ่มต้นเป็นประวัติการเติมสต็อกด้วย (ถือเป็นของเข้าคลังครั้งแรก)
+      if (payload.quantity > 0) {
+        await supabase.from('restock_logs').insert([{
+          product_name: payload.name,
+          quantity: payload.quantity,
+          added_by: currentUser?.emp_id || 'ไม่ระบุ'
+        }]);
+        fetchRestockLogs();
+      }
       alert('เพิ่มรายการพัสดุใหม่เข้าสู่ระบบเรียบร้อยแล้ว');
       setProdName(''); setProdQty(0); setProdPrice(0); setProdImg(''); setProdLoc(''); setProdPurchaseUrl(''); setProdStorePhone(''); 
       setProdStoreAddress1(''); setProdStoreAddress2(''); setProdStoreAddress3('');
@@ -477,15 +550,37 @@ export default function App() {
     }
   };
 
+  // Soft-delete: ซ่อนรายการจากหน้าจอปกติ (ทั้งแท็บอนุมัติเบิก และรายงานประวัติ) แต่ไม่ลบข้อมูลจริงออกจาก Supabase
+  // สงวนสิทธิ์ไว้เฉพาะ Super Admin เพื่อรักษาความสามารถในการตรวจสอบย้อนหลัง (accountability)
+  const handleSoftDeleteWithdrawRequest = async (reqId) => {
+    if (currentUser.role !== 'Super Admin') return;
+    if (!window.confirm('ยืนยันการลบรายการนี้ออกจากหน้าจอ? (ข้อมูลจะยังถูกเก็บไว้ในระบบเพื่อการตรวจสอบย้อนหลัง)')) return;
+    const { error } = await supabase.from('withdraw_requests').update({ is_deleted: true }).eq('id', reqId);
+    if (error) {
+      alert('ไม่สามารถลบรายการได้: ' + error.message);
+    } else {
+      fetchWithdrawRequests();
+      fetchTransactions();
+    }
+  };
+
   const handleRestock = async (product, amount) => {
     const qty = parseInt(amount) || 1;
     const newQty = product.quantity + qty;
     const { error } = await supabase.from('products').update({ quantity: newQty }).eq('id', product.id);
     if (!error) {
+      // บันทึกประวัติการเติมสต็อก (stock-in log)
+      await supabase.from('restock_logs').insert([{
+        product_id: product.id,
+        product_name: product.name,
+        quantity: qty,
+        added_by: currentUser?.emp_id || 'ไม่ระบุ'
+      }]);
       alert('เพิ่มพัสดุเข้าคลังสต็อกเรียบร้อยแล้ว');
       setSelectedProduct(null);
       fetchProducts();
       fetchTransactions();
+      fetchRestockLogs();
     }
   };
 
@@ -701,6 +796,38 @@ export default function App() {
     }
   };
 
+  // Soft-delete: ซ่อนจดหมายแจ้งปัญหาจากหน้าจอปกติ แต่ไม่ลบออกจาก Supabase จริง (Super Admin เท่านั้น)
+  const handleSoftDeleteReport = async (reportId) => {
+    if (currentUser.role !== 'Super Admin') return;
+    if (!window.confirm('ยืนยันการลบจดหมายฉบับนี้ออกจากหน้าจอ? (ข้อมูลจะยังถูกเก็บไว้ในระบบเพื่อการตรวจสอบย้อนหลัง)')) return;
+    const { error } = await supabase.from('reports').update({ is_deleted: true }).eq('id', reportId);
+    if (error) {
+      alert('ไม่สามารถลบจดหมายได้: ' + error.message);
+    } else {
+      if (selectedReport && selectedReport.id === reportId) setSelectedReport(null);
+      fetchReports();
+    }
+  };
+
+  // บันทึกการตั้งค่าหัวข้อระบบ (Super Admin เท่านั้น)
+  const handleSaveSettings = async (newTitle, newSubtitle) => {
+    if (currentUser.role !== 'Super Admin') return;
+    if (!siteSettings.id) {
+      alert('ไม่พบแถวการตั้งค่าในตาราง settings — ตรวจสอบว่ารัน SQL สร้างตาราง settings แล้วหรือยัง');
+      return;
+    }
+    const { error } = await supabase
+      .from('settings')
+      .update({ site_title: newTitle, site_subtitle: newSubtitle, updated_at: new Date().toISOString() })
+      .eq('id', siteSettings.id);
+    if (error) {
+      alert('ไม่สามารถบันทึกการตั้งค่าได้: ' + error.message);
+    } else {
+      alert('บันทึกการตั้งค่าระบบเรียบร้อยแล้ว');
+      fetchSettings();
+    }
+  };
+
   const exportToCSV = (data, filename) => {
     if (!data.length) return;
     const headers = Object.keys(data[0]).join(',');
@@ -790,7 +917,7 @@ export default function App() {
         <div style={styles.card}>
           <div style={styles.loginHeader}>
             <h2 style={styles.title}>
-              {isRegistering ? 'ลงทะเบียนเข้าใช้งานระบบ' : 'ระบบบริหารจัดการคลังสินค้าและพัสดุ'}
+              {isRegistering ? 'ลงทะเบียนเข้าใช้งานระบบ' : siteSettings.site_title}
             </h2>
             <p style={{ fontSize: 12, color: '#64748b', margin: 0 }}>ระบบสารสนเทศเพื่อการจัดการภายในองค์กร</p>
           </div>
@@ -828,6 +955,9 @@ export default function App() {
     );
   }
 
+  const isAdminLevel = currentUser.role === 'Admin' || currentUser.role === 'Super Admin';
+  const isSuperAdmin = currentUser.role === 'Super Admin';
+
   return (
     <div style={styles.appWrapper}>
       {/* Header */}
@@ -835,8 +965,8 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={styles.logoBadge}>INVENTORY</div>
           <div>
-            <h3 style={{ margin: 0, fontSize: 16, fontWeight: '700', letterSpacing: '0.5px' }}>ระบบบริหารจัดการคลังสินค้าและพัสดุ</h3>
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>Enterprise Asset & Stock Management System</span>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: '700', letterSpacing: '0.5px' }}>{siteSettings.site_title}</h3>
+            <span style={{ fontSize: 11, color: '#94a3b8' }}>{siteSettings.site_subtitle}</span>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -856,11 +986,15 @@ export default function App() {
           รายการอนุมัติเบิกพัสดุ {pendingWithdrawCount > 0 && <span style={styles.badge}>{pendingWithdrawCount}</span>}
         </button>
 
-        {currentUser.role === 'Admin' && (
+        {isAdminLevel && (
           <>
             <button style={activeTab === 'add' ? styles.navActive : styles.navBtn} onClick={() => setActiveTab('add')}>เพิ่มรายการพัสดุ</button>
             <button style={activeTab === 'users' ? styles.navActive : styles.navBtn} onClick={() => setActiveTab('users')}>จัดการสิทธิ์ผู้ใช้งาน</button>
           </>
+        )}
+
+        {isSuperAdmin && (
+          <button style={activeTab === 'settings' ? styles.navActive : styles.navBtn} onClick={() => setActiveTab('settings')}>ตั้งค่าระบบ</button>
         )}
 
         <button style={activeTab === 'reports' ? styles.navActive : styles.navBtn} onClick={() => setActiveTab('reports')}>
@@ -942,7 +1076,7 @@ export default function App() {
                       >
                         รายละเอียด / เบิกพัสดุ
                       </button>
-                      {(currentUser.role === 'Restocker' || currentUser.role === 'Admin') && (
+                      {(currentUser.role === 'Restocker' || isAdminLevel) && (
                         <button 
                           style={{ ...styles.btnCardAction, backgroundColor: '#334155', marginTop: 6 }} 
                           onClick={() => handlePrintSticker(product)}
@@ -975,7 +1109,7 @@ export default function App() {
                     <th>จำนวน</th>
                     <th>วัตถุประสงค์การใช้งาน</th>
                     <th>สถานะการอนุมัติ</th>
-                    {currentUser.role === 'Admin' && <th style={{ textAlign: 'center' }}>การดำเนินการ</th>}
+                    {isAdminLevel && <th style={{ textAlign: 'center' }}>การดำเนินการ</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -991,16 +1125,21 @@ export default function App() {
                         {isApprovedStatus(req.status) && <span style={styles.statusApproved}>อนุมัติเรียบร้อย</span>}
                         {isRejectedStatus(req.status) && <span style={styles.statusRejected}>ไม่อนุมัติ</span>}
                       </td>
-                      {currentUser.role === 'Admin' && (
+                      {isAdminLevel && (
                         <td style={{ textAlign: 'center' }}>
-                          {isPendingStatus(req.status) ? (
-                            <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                              <button style={styles.btnSuccessSmall} onClick={() => handleApproveWithdrawRequest(req)}>อนุมัติ</button>
-                              <button style={styles.btnDangerSmall} onClick={() => handleRejectWithdrawRequest(req.id)}>ปฏิเสธ</button>
-                            </div>
-                          ) : (
-                            <span style={{ color: '#94a3b8', fontSize: 12 }}>เสร็จสิ้น</span>
-                          )}
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                            {isPendingStatus(req.status) ? (
+                              <>
+                                <button style={styles.btnSuccessSmall} onClick={() => handleApproveWithdrawRequest(req)}>อนุมัติ</button>
+                                <button style={styles.btnDangerSmall} onClick={() => handleRejectWithdrawRequest(req.id)}>ปฏิเสธ</button>
+                              </>
+                            ) : (
+                              <span style={{ color: '#94a3b8', fontSize: 12 }}>เสร็จสิ้น</span>
+                            )}
+                            {isSuperAdmin && (
+                              <button style={styles.btnDangerSmall} onClick={() => handleSoftDeleteWithdrawRequest(req.id)}>ลบ</button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -1012,7 +1151,7 @@ export default function App() {
         )}
 
         {/* Add Product View */}
-        {activeTab === 'add' && currentUser.role === 'Admin' && (
+        {activeTab === 'add' && isAdminLevel && (
           <div style={styles.cardLarge}>
             <h4 style={styles.pageTitle}>ลงทะเบียนเพิ่มพัสดุใหม่</h4>
             <span style={styles.pageSubtitle}>กรอกข้อมูลรายละเอียดพัสดุเพื่อบันทึกเข้าสู่ระบบสารสนเทศคลัง</span>
@@ -1073,7 +1212,7 @@ export default function App() {
         )}
 
         {/* Users Management View */}
-        {activeTab === 'users' && currentUser.role === 'Admin' && (
+        {activeTab === 'users' && isAdminLevel && (
           <div>
             <div style={{ marginBottom: 15 }}>
               <h4 style={styles.pageTitle}>จัดการสิทธิ์ผู้ใช้งานในระบบ</h4>
@@ -1093,7 +1232,22 @@ export default function App() {
                   {usersList.map(u => (
                     <tr key={u.id}>
                       <td><b>{u.emp_id}</b></td>
-                      <td>{u.role}</td>
+                      <td>
+                        {isSuperAdmin ? (
+                          <select 
+                            style={{ ...styles.input, padding: '4px 8px', fontSize: 12 }} 
+                            value={u.role} 
+                            onChange={e => handleChangeUserRole(u, e.target.value)}
+                          >
+                            <option value="Employee">Employee</option>
+                            <option value="Restocker">Restocker</option>
+                            <option value="Admin">Admin</option>
+                            <option value="Super Admin">Super Admin</option>
+                          </select>
+                        ) : (
+                          u.role
+                        )}
+                      </td>
                       <td>
                         {u.status === 'approved' ? (
                           <span style={styles.statusApproved}>อนุมัติแล้ว</span>
@@ -1122,6 +1276,11 @@ export default function App() {
               </table>
             </div>
           </div>
+        )}
+
+        {/* Settings — Super Admin เท่านั้น */}
+        {activeTab === 'settings' && isSuperAdmin && (
+          <SettingsPanel siteSettings={siteSettings} onSave={handleSaveSettings} />
         )}
 
         {/* Inbox Reports System */}
@@ -1170,6 +1329,14 @@ export default function App() {
                             ) : (
                               <span style={styles.statusPending}>รอการดำเนินการ</span>
                             )}
+                            {isSuperAdmin && (
+                              <button 
+                                style={{ ...styles.btnDangerSmall, marginLeft: 8 }} 
+                                onClick={() => handleSoftDeleteReport(rep.id)}
+                              >
+                                ลบ
+                              </button>
+                            )}
                           </div>
                         </div>
 
@@ -1185,7 +1352,7 @@ export default function App() {
                           </div>
                         )}
 
-                        {currentUser.role === 'Admin' && (
+                        {isAdminLevel && (
                           <div style={{ marginTop: 12, borderTop: '1px solid #f1f5f9', paddingTop: 10 }}>
                             <div style={{ display: 'flex', gap: 8 }}>
                               <input 
@@ -1327,6 +1494,7 @@ export default function App() {
                     <th>ราคา/หน่วย</th>
                     <th>มูลค่ารวม (บาท)</th>
                     <th>บันทึกระบบ</th>
+                    {isSuperAdmin && <th style={{ textAlign: 'center' }}>การดำเนินการ</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1340,12 +1508,49 @@ export default function App() {
                         <td>{w.unitPrice.toLocaleString()} บาท</td>
                         <td><b>{w.totalPrice.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</b></td>
                         <td style={{ fontSize: 11, color: '#64748b' }}>{w.rawDetails}</td>
+                        {isSuperAdmin && (
+                          <td style={{ textAlign: 'center' }}>
+                            <button style={styles.btnDangerSmall} onClick={() => handleSoftDeleteWithdrawRequest(w.id)}>ลบ</button>
+                          </td>
+                        )}
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="7" style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>
+                      <td colSpan={isSuperAdmin ? 8 : 7} style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>
                         ไม่พบข้อมูลประวัติการเบิกตามเงื่อนไขที่ระบุ
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <h5 style={{ marginTop: 25, marginBottom: 10, fontSize: 15, color: '#1e293b' }}>ประวัติการเติมพัสดุเข้าคลัง (Stock-in)</h5>
+            <div style={styles.tableCard}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th>วันที่-เวลา</th>
+                    <th>รายการพัสดุ</th>
+                    <th>จำนวนที่เติม</th>
+                    <th>ผู้ทำรายการ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {restockLogs.length > 0 ? (
+                    restockLogs.map(log => (
+                      <tr key={log.id}>
+                        <td>{new Date(log.created_at).toLocaleString('th-TH')}</td>
+                        <td>{log.product_name}</td>
+                        <td><b style={{ color: '#16a34a' }}>+{log.quantity}</b> หน่วย</td>
+                        <td>{log.added_by}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="4" style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>
+                        ยังไม่มีประวัติการเติมสต็อกในระบบ
                       </td>
                     </tr>
                   )}
@@ -1484,7 +1689,7 @@ export default function App() {
                     onChange={e => setActionQty(e.target.value)} 
                   />
 
-                  {(currentUser.role === 'Employee' || currentUser.role === 'Admin') && (
+                  {(currentUser.role === 'Employee' || isAdminLevel) && (
                     <>
                       <label style={styles.label}>วัตถุประสงค์การใช้งาน / หมายเหตุการเบิก (จำเป็น):</label>
                       <input 
@@ -1499,27 +1704,27 @@ export default function App() {
                 </div>
 
                 <div style={styles.flexRowGap}>
-                  {(currentUser.role === 'Employee' || currentUser.role === 'Admin') && (
+                  {(currentUser.role === 'Employee' || isAdminLevel) && (
                     <button style={styles.btnPrimary} onClick={() => handleRequestWithdraw(selectedProduct)}>
                       ส่งคำขออนุมัติเบิกพัสดุ
                     </button>
                   )}
-                  {(currentUser.role === 'Restocker' || currentUser.role === 'Admin') && (
+                  {(currentUser.role === 'Restocker' || isAdminLevel) && (
                     <button style={styles.btnSuccess} onClick={() => handleRestock(selectedProduct, actionQty)}>
                       นำเข้าพัสดุเพิ่ม
                     </button>
                   )}
-                  {(currentUser.role === 'Restocker' || currentUser.role === 'Admin') && (
+                  {(currentUser.role === 'Restocker' || isAdminLevel) && (
                     <button style={styles.btnPrint} onClick={() => handlePrintSticker(selectedProduct)}>
                       🖨️ พิมพ์สติกเกอร์
                     </button>
                   )}
-                  {currentUser.role === 'Admin' && (
+                  {isAdminLevel && (
                     <button style={styles.btnWarning} onClick={() => setIsEditing(true)}>
                       แก้ไขข้อมูล
                     </button>
                   )}
-                  {currentUser.role === 'Admin' && (
+                  {isAdminLevel && (
                     <button style={styles.btnDanger} onClick={() => handleDeleteProduct(selectedProduct.id)}>
                       ลบรายการ
                     </button>
