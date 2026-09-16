@@ -637,6 +637,26 @@ export default function App() {
         
         replyText = `💰 สรุปประเมินมูลค่าพัสดุคงคลัง:\n\n• มูลค่ารวมสุทธิ: ${totalValue.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท\n• คำนวณจากจำนวนพัสดุรวม ${totalQtyCount.toLocaleString()} หน่วย (${products.length} รายการ)`;
       }
+      // --- คำถามเชิงวิเคราะห์: ใครเติมสต็อกเยอะสุด ---
+      else if (
+        (queryLower.includes('ใคร') && (queryLower.includes('เติม') || queryLower.includes('เพิ่มของ') || queryLower.includes('เพิ่มสต็อก'))) ||
+        queryLower.includes('ผู้เติมสต็อกสูงสุด') ||
+        queryLower.includes('คนเติมเยอะสุด')
+      ) {
+        if (restockLogs.length === 0) {
+          replyText = 'ยังไม่มีข้อมูลประวัติการเติมสต็อกในระบบครับ';
+        } else {
+          const restockUserMap = restockLogs.reduce((acc, log) => {
+            const key = log.added_by || 'ไม่ระบุ';
+            if (!acc[key]) acc[key] = { user: key, times: 0, totalQty: 0 };
+            acc[key].times += 1;
+            acc[key].totalQty += (log.quantity || 0);
+            return acc;
+          }, {});
+          const topRestocker = Object.values(restockUserMap).sort((a, b) => b.totalQty - a.totalQty)[0];
+          replyText = `🏆 ผู้ที่เติมสต็อกมากที่สุดคือ "${topRestocker.user}"\n\n• เติมรวม: ${topRestocker.totalQty.toLocaleString()} หน่วย\n• จำนวนครั้งที่เติม: ${topRestocker.times} ครั้ง`;
+        }
+      }
       // --- คำถามเชิงวิเคราะห์: ใครเบิกเยอะสุด (ต้องมีคำที่บ่งชี้ "คน" ด้วย ไม่ใช่แค่ "เบิกเยอะสุด" เฉยๆ เพราะจะชนกับคำถามเรื่อง "สินค้า" ที่เบิกเยอะสุด) ---
       else if (
         (queryLower.includes('ใคร') && (queryLower.includes('เบิก') || queryLower.includes('ขอเบิก'))) ||
@@ -1549,7 +1569,47 @@ export default function App() {
               </table>
             </div>
 
-            <h5 style={{ marginTop: 25, marginBottom: 10, fontSize: 15, color: '#1e293b' }}>ประวัติการเติมพัสดุเข้าคลัง (Stock-in)</h5>
+            <h5 style={{ marginTop: 25, marginBottom: 10, fontSize: 15, color: '#1e293b' }}>สรุปการเติมสต็อกตามผู้ทำรายการ</h5>
+            <div style={styles.tableCard}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th>ผู้ทำรายการ</th>
+                    <th>จำนวนครั้งที่เติม</th>
+                    <th>จำนวนรวมที่เติม</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {restockLogs.length > 0 ? (
+                    Object.values(
+                      restockLogs.reduce((acc, log) => {
+                        const key = log.added_by || 'ไม่ระบุ';
+                        if (!acc[key]) acc[key] = { user: key, times: 0, totalQty: 0 };
+                        acc[key].times += 1;
+                        acc[key].totalQty += (log.quantity || 0);
+                        return acc;
+                      }, {})
+                    )
+                      .sort((a, b) => b.totalQty - a.totalQty)
+                      .map(row => (
+                        <tr key={row.user}>
+                          <td><b>{row.user}</b></td>
+                          <td>{row.times} ครั้ง</td>
+                          <td><b style={{ color: '#16a34a' }}>+{row.totalQty.toLocaleString()}</b> หน่วย</td>
+                        </tr>
+                      ))
+                  ) : (
+                    <tr>
+                      <td colSpan="3" style={{ textAlign: 'center', color: '#94a3b8', padding: 20 }}>
+                        ยังไม่มีประวัติการเติมสต็อกในระบบ
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <h5 style={{ marginTop: 25, marginBottom: 10, fontSize: 15, color: '#1e293b' }}>ประวัติการเติมพัสดุเข้าคลัง (Stock-in) แบบละเอียด</h5>
             <div style={styles.tableCard}>
               <table style={styles.table}>
                 <thead>
