@@ -467,7 +467,7 @@ export default function App() {
           quantity_added: payload.quantity,
           added_by: currentUser?.emp_id || 'ไม่ระบุ'
         }]);
-        if (logError) console.error('Restock log insert failed:', logError.message);
+        if (logError) alert('⚠️ ปรับจำนวนสต็อกสำเร็จ แต่บันทึกประวัติการเติมสต็อกไม่สำเร็จ: ' + logError.message);
         fetchRestockLogs();
       }
       alert('เพิ่มรายการพัสดุใหม่เข้าสู่ระบบเรียบร้อยแล้ว');
@@ -589,7 +589,7 @@ export default function App() {
         quantity_added: qty,
         added_by: currentUser?.emp_id || 'ไม่ระบุ'
       }]);
-      if (logError) console.error('Restock log insert failed:', logError.message);
+      if (logError) alert('⚠️ ปรับจำนวนสต็อกสำเร็จ แต่บันทึกประวัติการเติมสต็อกไม่สำเร็จ: ' + logError.message);
       alert('เพิ่มพัสดุเข้าคลังสต็อกเรียบร้อยแล้ว');
       setSelectedProduct(null);
       fetchProducts();
