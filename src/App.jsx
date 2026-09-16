@@ -462,11 +462,12 @@ export default function App() {
     } else {
       // บันทึกจำนวนเริ่มต้นเป็นประวัติการเติมสต็อกด้วย (ถือเป็นของเข้าคลังครั้งแรก)
       if (payload.quantity > 0) {
-        await supabase.from('restock_logs').insert([{
-          product_name: payload.name,
-          quantity: payload.quantity,
+        const { error: logError } = await supabase.from('restock_logs').insert([{
+          item_name: payload.name,
+          quantity_added: payload.quantity,
           added_by: currentUser?.emp_id || 'ไม่ระบุ'
         }]);
+        if (logError) console.error('Restock log insert failed:', logError.message);
         fetchRestockLogs();
       }
       alert('เพิ่มรายการพัสดุใหม่เข้าสู่ระบบเรียบร้อยแล้ว');
@@ -582,12 +583,13 @@ export default function App() {
     const { error } = await supabase.from('products').update({ quantity: newQty }).eq('id', product.id);
     if (!error) {
       // บันทึกประวัติการเติมสต็อก (stock-in log)
-      await supabase.from('restock_logs').insert([{
-        product_id: product.id,
-        product_name: product.name,
-        quantity: qty,
+      const { error: logError } = await supabase.from('restock_logs').insert([{
+        item_id: product.id,
+        item_name: product.name,
+        quantity_added: qty,
         added_by: currentUser?.emp_id || 'ไม่ระบุ'
       }]);
+      if (logError) console.error('Restock log insert failed:', logError.message);
       alert('เพิ่มพัสดุเข้าคลังสต็อกเรียบร้อยแล้ว');
       setSelectedProduct(null);
       fetchProducts();
@@ -650,7 +652,7 @@ export default function App() {
             const key = log.added_by || 'ไม่ระบุ';
             if (!acc[key]) acc[key] = { user: key, times: 0, totalQty: 0 };
             acc[key].times += 1;
-            acc[key].totalQty += (log.quantity || 0);
+            acc[key].totalQty += (log.quantity_added || 0);
             return acc;
           }, {});
           const topRestocker = Object.values(restockUserMap).sort((a, b) => b.totalQty - a.totalQty)[0];
@@ -1586,7 +1588,7 @@ export default function App() {
                         const key = log.added_by || 'ไม่ระบุ';
                         if (!acc[key]) acc[key] = { user: key, times: 0, totalQty: 0 };
                         acc[key].times += 1;
-                        acc[key].totalQty += (log.quantity || 0);
+                        acc[key].totalQty += (log.quantity_added || 0);
                         return acc;
                       }, {})
                     )
@@ -1625,8 +1627,8 @@ export default function App() {
                     restockLogs.map(log => (
                       <tr key={log.id}>
                         <td>{new Date(log.created_at).toLocaleString('th-TH')}</td>
-                        <td>{log.product_name}</td>
-                        <td><b style={{ color: '#16a34a' }}>+{log.quantity}</b> หน่วย</td>
+                        <td>{log.item_name}</td>
+                        <td><b style={{ color: '#16a34a' }}>+{log.quantity_added}</b> หน่วย</td>
                         <td>{log.added_by}</td>
                       </tr>
                     ))
